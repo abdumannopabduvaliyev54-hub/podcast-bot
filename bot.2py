@@ -1,0 +1,216 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+import json, os
+
+TOKEN = "8356202668:AAF06xHerY0ehuO8HsiRsbs3A1v3kP47NEA"
+DATA_FILE = "data.json"
+
+TOPICS = {
+    "muvaffaqiyat": {
+        "emoji": "🔥",
+        "nomi": "Muvaffaqiyat",
+        "cats": {
+            "dunyo_liderlari": "Dunyo liderlari",
+            "ozbeklar": "O'zbek yetakchilar",
+            "mindset": "Mindset & Psixologiya"
+        }
+    },
+    "talim": {
+        "emoji": "🎓",
+        "nomi": "Ta'lim yo'li",
+        "cats": {
+            "top_univer": "Harvard, MIT, Oxford",
+            "stipendiya": "Stipendiyalar",
+            "ielts_sat": "IELTS & SAT sirlari"
+        }
+    },
+    "biznes": {
+        "emoji": "💼",
+        "nomi": "Karyera & Biznes",
+        "cats": {
+            "startap": "Startap g'oyalari",
+            "freelance": "Freelance & Remote",
+            "intervyu": "CV & Intervyu sirlari"
+        }
+    },
+    "rivojlanish": {
+        "emoji": "💪",
+        "nomi": "O'z-o'zini rivojlantirish",
+        "cats": {
+            "soglik": "Sog'lom hayot & Sport",
+            "kitoblar": "Kitob tahlillari",
+            "vaqt": "Vaqtni boshqarish"
+        }
+    },
+    "global": {
+        "emoji": "🌍",
+        "nomi": "Global yoshlar",
+        "cats": {
+            "chet_el": "Chet elda o'qiganlar",
+            "tajriba": "Xalqaro tajribalar",
+            "stipendiya2": "Yoshlar tarixi"
+        }
+    }
+}
+
+def load():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    data = {}
+    for t in TOPICS:
+        data[t] = {}
+        for c in TOPICS[t]["cats"]:
+            data[t][c] = []
+    return data
+
+def save(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+DB = load()
+pending = {}
+ADMIN_ID = None
+
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    kb = []
+    for key, val in TOPICS.items():
+        kb.append([InlineKeyboardButton(val["emoji"] + " " + val["nomi"], callback_data="t_" + key)])
+    kb.append([InlineKeyboardButton("📊 Statistika", callback_data="stats")])
+    await update.message.reply_text(
+        "Assalomu alaykum! 🎧\n\nO'zbekiston yoshlari uchun eng yaxshi podcast kliplari.\n\nQaysi yo'nalish qiziqtiradi?",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    d = q.data
+
+    if d == "main":
+        kb = []
+        for key, val in TOPICS.items():
+            kb.append([InlineKeyboardButton(val["emoji"] + " " + val["nomi"], callback_data="t_" + key)])
+        kb.append([InlineKeyboardButton("📊 Statistika", callback_data="stats")])
+        await q.edit_message_text(
+            "Qaysi yo'nalish qiziqtiradi?",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif d.startswith("t_"):
+        key = d[2:]
+        if key not in TOPICS:
+            return
+        topic = TOPICS[key]
+        kb = []
+        for ckey, cname in topic["cats"].items():
+            count = len(DB.get(key, {}).get(ckey, []))
+            label = cname + " (" + str(count) + " klip)"
+            kb.append([InlineKeyboardButton(label, callback_data="c_" + key + "_" + ckey)])
+        kb.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="main")])
+        await q.edit_message_text(
+            topic["emoji"] + " " + topic["nomi"] + "\n\nKategoriyani tanlang:",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif d.startswith("c_"):
+        parts = d.split("_", 2)
+        tkey, ckey = parts[1], parts[2]
+        if tkey not in TOPICS or ckey not in TOPICS[tkey]["cats"]:
+            return
+        kliplar = DB.get(tkey, {}).get(ckey, [])
+        cname = TOPICS[tkey]["cats"][ckey]
+        if not kliplar:
+            await q.edit_message_text(
+                "📭 " + cname + "\n\nHali klip qo'shilmagan. Tez orada! 🚀",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="t_" + tkey)]])
+            )
+            return
+        kb = []
+        for i, k in enumerate(kliplar):
+            kb.append([InlineKeyboardButton("🎧 " + k["nomi"], callback_data="k_" + tkey + "_" + ckey + "_" + str(i))])
+        kb.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="t_" + tkey)])
+        await q.edit_message_text(
+            "🎧 " + cname + " — " + str(len(kliplar)) + " ta klip:",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif d.startswith("k_"):
+        parts = d.split("_", 3)
+        tkey, ckey, idx = parts[1], parts[2], int(parts[3])
+        kliplar = DB.get(tkey, {}).get(ckey, [])
+        if idx >= len(kliplar):
+            return
+        klip = kliplar[idx]
+        await q.message.reply_audio(audio=klip["file_id"], title=klip["nomi"])
+        await q.edit_message_text(
+            "▶️ Tinglayapsiz: " + klip["nomi"],
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="c_" + tkey + "_" + ckey)]])
+        )
+
+    elif d == "stats":
+        total = sum(len(DB.get(t, {}).get(c, [])) for t in TOPICS for c in TOPICS[t]["cats"])
+        text = "📊 Bot statistikasi\n\nJami kliplar: " + str(total) + "\n\n"
+        for tkey, tval in TOPICS.items():
+            count = sum(len(DB.get(tkey, {}).get(c, [])) for c in tval["cats"])
+            text += tval["emoji"] + " " + tval["nomi"] + ": " + str(count) + " klip\n"
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="main")]]))
+
+async def media_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    global ADMIN_ID
+    msg = update.message
+    if not msg:
+        return
+    if ADMIN_ID is None:
+        ADMIN_ID = msg.from_user.id
+    if msg.from_user.id != ADMIN_ID:
+        return
+
+    file_id = None
+    if msg.audio:
+        file_id = msg.audio.file_id
+    elif msg.voice:
+        file_id = msg.voice.file_id
+    elif msg.document:
+        file_id = msg.document.file_id
+
+    if file_id:
+        caption = msg.caption or ""
+        parts = caption.strip().split(" ", 2)
+        if len(parts) >= 3 and parts[0] in TOPICS and parts[1] in TOPICS[parts[0]]["cats"]:
+            tkey, ckey, nomi = parts[0], parts[1], parts[2]
+            DB.setdefault(tkey, {}).setdefault(ckey, []).append({"nomi": nomi, "file_id": file_id})
+            save(DB)
+            cname = TOPICS[tkey]["cats"][ckey]
+            await msg.reply_text("✅ Qo'shildi: " + nomi + "\n📂 " + TOPICS[tkey]["nomi"] + " > " + cname)
+        else:
+            pending[msg.from_user.id] = file_id
+            topics_list = ""
+            for tkey, tval in TOPICS.items():
+                topics_list += "\n" + tval["emoji"] + " " + tkey + ":\n"
+                for ckey, cname in tval["cats"].items():
+                    topics_list += "   " + ckey + "\n"
+            await msg.reply_text("✅ Fayl qabul qilindi!\n\nEndi yozing:\n<topic> <kategoriya> <klip nomi>\n\nMisol:\ntalim top_univer MIT'ga kirgan o'zbek yoshi\n\nTopiclar:" + topics_list)
+        return
+
+    if msg.text and msg.from_user.id in pending:
+        parts = msg.text.strip().split(" ", 2)
+        if len(parts) < 3:
+            await msg.reply_text("Format: <topic> <kategoriya> <nom>")
+            return
+        tkey, ckey, nomi = parts[0], parts[1], parts[2]
+        if tkey not in TOPICS or ckey not in TOPICS[tkey]["cats"]:
+            await msg.reply_text("Topic yoki kategoriya noto'g'ri!")
+            return
+        file_id = pending.pop(msg.from_user.id)
+        DB.setdefault(tkey, {}).setdefault(ckey, []).append({"nomi": nomi, "file_id": file_id})
+        save(DB)
+        cname = TOPICS[tkey]["cats"][ckey]
+        await msg.reply_text("✅ Qo'shildi: " + nomi + "\n📂 " + TOPICS[tkey]["nomi"] + " > " + cname)
+
+app = Application.builder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button))
+app.add_handler(MessageHandler(filters.ALL, media_handler))
+print("Bot ishlamoqda...")
+app.run_polling()
